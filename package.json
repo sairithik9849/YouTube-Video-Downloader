@@ -12,6 +12,8 @@
   "license": "MIT",
   "dependencies": {
     "@distube/ytdl-core": "^4.16.12",
-    "electron": "^37.2.3"
+    "electron": "^37.2.3",
+    "ffmpeg-static": "^5.2.0",
+    "fluent-ffmpeg": "^2.1.3"
   }
 }

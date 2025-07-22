@@ -90,10 +90,21 @@ async function handleDownloadVideo() {
     progressBar.style.display = 'block';
     
     try {
+        // Get selected option and its merging data
+        const selectedOption = qualitySelect.options[qualitySelect.selectedIndex];
+        const needsMerging = selectedOption.dataset.needsMerging === 'true';
+        const audioItag = selectedOption.dataset.audioItag;
+        
         // Call secure API to download video
         console.log('Downloading video with quality:', qualitySelect.value);
+        console.log('Needs merging:', needsMerging);
+        
         const url = urlInput.value.trim();
-        const result = await window.electronAPI.downloadVideo(url, qualitySelect.value);
+        const result = await window.electronAPI.downloadVideo(url, {
+            videoItag: qualitySelect.value,
+            needsMerging: needsMerging,
+            audioItag: audioItag
+        });
         
         if (result.cancelled) {
             showStatus('Download cancelled', 'info');
@@ -155,7 +166,32 @@ function populateQualityOptions(formats) {
     formats.forEach(format => {
         const option = document.createElement('option');
         option.value = format.itag;
-        option.textContent = `${format.quality} (${format.container}) - ${format.size ? formatFileSize(format.size) : 'Unknown size'}`;
+        
+        // Create descriptive text with merging info
+        let description = `${format.quality} (${format.container})`;
+        
+        // Only tag 1080p and above as "High Quality"
+        const getQualityNum = (quality) => {
+            const match = quality.match(/(\d+)p/);
+            return match ? parseInt(match[1]) : 0;
+        };
+        
+        if (format.needsMerging && getQualityNum(format.quality) >= 1080) {
+            description += ' - High Quality ⭐';
+        }
+        
+        if (format.size) {
+            description += ` - ${formatFileSize(format.size)}`;
+        } else {
+            description += ' - Size unknown';
+        }
+        
+        option.textContent = description;
+        
+        // Store additional data for download handler
+        option.dataset.needsMerging = format.needsMerging;
+        option.dataset.audioItag = format.audioItag || '';
+        
         qualitySelect.appendChild(option);
     });
     
@@ -170,9 +206,19 @@ function formatFileSize(bytes) {
 }
 
 // Set up secure event listeners for download progress
-window.electronAPI.onDownloadProgress(({ percent, downloaded, total }) => {
+window.electronAPI.onDownloadProgress(({ percent, downloaded, total, stage }) => {
     progressBar.value = percent;
-    showStatus(`Downloading... ${Math.round(percent)}% (${formatFileSize(downloaded)} / ${formatFileSize(total)})`, 'info');
+    
+    if (stage) {
+        // Show stage information for merging process
+        showStatus(`${stage}`, 'info');
+    } else if (downloaded && total) {
+        // Show traditional download progress
+        showStatus(`Downloading... ${Math.round(percent)}% (${formatFileSize(downloaded)} / ${formatFileSize(total)})`, 'info');
+    } else {
+        // Show basic progress
+        showStatus(`Processing... ${Math.round(percent)}%`, 'info');
+    }
 });
 
 window.electronAPI.onDownloadComplete(({ success, filePath, error }) => {

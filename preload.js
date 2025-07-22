@@ -7,7 +7,7 @@ console.log('Preload script loaded!');
 contextBridge.exposeInMainWorld('electronAPI', {
   // YouTube video operations
   getVideoInfo: (url) => ipcRenderer.invoke('get-video-info', url),
-  downloadVideo: (url, itag) => ipcRenderer.invoke('download-video', { url, itag }),
+  downloadVideo: (url, downloadOptions) => ipcRenderer.invoke('download-video', { url, ...downloadOptions }),
   playVideo: (filePath) => ipcRenderer.invoke('play-video', filePath),
   openFolder: (filePath) => ipcRenderer.invoke('open-folder', filePath),
   
