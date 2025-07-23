@@ -11,22 +11,127 @@ import { AuthService } from './auth-service.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Function to sanitize filename by removing invalid characters
+function sanitizeFilename(filename) {
+  // Remove or replace invalid characters for filenames
+  return filename
+    .replace(/[<>:"/\\|?*]/g, '') // Remove invalid characters
+    .replace(/[\x00-\x1f\x80-\x9f]/g, '') // Remove control characters
+    .replace(/^\.+/, '') // Remove leading dots
+    .replace(/\.+$/, '') // Remove trailing dots
+    .replace(/\s+/g, ' ') // Replace multiple spaces with single space
+    .trim() // Remove leading/trailing whitespace
+    .substring(0, 100); // Limit length to 100 characters
+}
+
 // Set ffmpeg path to use the static binary
-ffmpeg.setFfmpegPath(ffmpegStatic);
+// Handle both development and production environments
+let ffmpegPath = ffmpegStatic;
+
+// In production (packaged app), FFmpeg is unpacked from ASAR
+if (app.isPackaged) {
+  // Get the path to the unpacked FFmpeg binary
+  const ffmpegBinary = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+  
+  // Try multiple possible locations for FFmpeg
+  const possiblePaths = [
+    // First try: unpacked from ASAR
+    path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'ffmpeg-static', ffmpegBinary),
+    // Second try: extraResources
+    path.join(process.resourcesPath, 'ffmpeg-static', ffmpegBinary),
+    // Third try: platform-specific subdirectory in extraResources
+    path.join(process.resourcesPath, 'ffmpeg-static', process.platform, process.arch, ffmpegBinary),
+  ];
+  
+  // Find the first existing FFmpeg binary
+  ffmpegPath = possiblePaths.find(path => fs.existsSync(path));
+  
+  if (ffmpegPath) {
+    console.log('✅ Found FFmpeg binary at:', ffmpegPath);
+  } else {
+    console.error('❌ FFmpeg binary not found in any of these locations:');
+    possiblePaths.forEach(p => console.log('  -', p));
+    
+    // Debug: List available files in resources
+    console.log('Available files in resources:');
+    try {
+      const resourcesContents = fs.readdirSync(process.resourcesPath);
+      console.log('Resources directory contents:', resourcesContents);
+      
+      // Check if ffmpeg-static directory exists
+      const ffmpegStaticDir = path.join(process.resourcesPath, 'ffmpeg-static');
+      if (fs.existsSync(ffmpegStaticDir)) {
+        console.log('ffmpeg-static contents:', fs.readdirSync(ffmpegStaticDir));
+      }
+    } catch (error) {
+      console.error('Error reading resources directory:', error.message);
+    }
+    
+    // Fallback to the original path (might work in some cases)
+    ffmpegPath = ffmpegStatic;
+  }
+} else {
+  console.log('Development FFmpeg path:', ffmpegPath);
+}
+
+ffmpeg.setFfmpegPath(ffmpegPath);
 
 let mainWindow;
 let authService;
 
+// Platform detection - Windows and Mac only
+const isMac = process.platform === 'darwin';
+const isWindows = process.platform === 'win32';
+
+// Ensure we're running on supported platforms
+if (!isMac && !isWindows) {
+  console.error('❌ This application only supports Windows and macOS');
+  app.quit();
+}
+
+// Get platform-specific icon
+function getAppIcon() {
+  let iconPath;
+  
+  if (isMac) {
+    iconPath = path.join(__dirname, 'icons', 'icon.icns');
+  } else {
+    // Windows
+    iconPath = path.join(__dirname, 'icons', 'icon.ico');
+  }
+  
+  // In production, check if icon exists in the expected location
+  if (app.isPackaged) {
+    // Try multiple locations for the icon in packaged app
+    const possibleIconPaths = [
+      iconPath,
+      path.join(process.resourcesPath, 'icons', isMac ? 'icon.icns' : 'icon.ico'),
+      path.join(process.resourcesPath, 'app.asar.unpacked', 'icons', isMac ? 'icon.icns' : 'icon.ico')
+    ];
+    
+    iconPath = possibleIconPaths.find(p => fs.existsSync(p)) || iconPath;
+    console.log('Using icon path:', iconPath);
+  }
+  
+  return iconPath;
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
+    width: 900,
+    height: 700,
     webPreferences: {
       nodeIntegration: false,        // 🔒 Disabled for security
       contextIsolation: true,        // 🔒 Enabled for security
       preload: path.join(__dirname, 'preload.js')  // 🔗 Secure bridge
     },
-    icon: undefined // We can add an icon later
+    icon: getAppIcon(),  // 🎨 Platform-specific icon
+    show: false  // Don't show until ready
+  });
+
+  // Show window when ready to prevent icon loading issues
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
   });
 
   mainWindow.loadFile('index.html');
@@ -40,6 +145,12 @@ function createWindow() {
 // This method will be called when Electron has finished initialization
 app.whenReady().then(() => {
   authService = new AuthService();
+  
+  // Set app icon for better taskbar integration
+  if (isWindows) {
+    app.setAppUserModelId('com.sairithik.youtube-video-downloader');
+  }
+  
   createWindow();
 
   app.on('activate', () => {
@@ -59,6 +170,16 @@ app.on('window-all-closed', () => {
 // Authentication IPC handlers
 ipcMain.handle('get-auth-url', () => {
   return authService.getAuthUrl();
+});
+
+ipcMain.handle('start-oauth-flow', async () => {
+  try {
+    const code = await authService.startOAuthFlow();
+    const result = await authService.exchangeCodeForTokens(code);
+    return result;
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 });
 
 ipcMain.handle('exchange-code-for-tokens', async (event, code) => {
@@ -107,10 +228,10 @@ ipcMain.handle('get-video-info', async (event, url) => {
     const info = await ytdl.getInfo(url, {
       requestOptions: {
         headers: {
-          cookie: cookies,
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
-      }
+      },
+      cookies: cookies
     });
     
     // Get video+audio formats (lower quality, ready to download)
@@ -209,16 +330,21 @@ ipcMain.handle('get-video-info', async (event, url) => {
 });
 
 // Download video handler with merging support
-ipcMain.handle('download-video', async (event, { url, videoItag, needsMerging, audioItag }) => {
+ipcMain.handle('download-video', async (event, { url, videoItag, needsMerging, audioItag, videoTitle }) => {
   
   try {
     // Check if user is authenticated
     if (!authService.isAuthenticated()) {
       return { error: 'Please sign in with your Google account first.' };
     }
+    
+    // Clean the video title for use as filename
+    const cleanTitle = videoTitle ? sanitizeFilename(videoTitle) : 'video';
+    const defaultFilename = `${cleanTitle}.mp4`;
+    
     // Show save dialog
     const { filePath } = await dialog.showSaveDialog(mainWindow, {
-      defaultPath: 'video.mp4',
+      defaultPath: defaultFilename,
       filters: [
         { name: 'Video Files', extensions: ['mp4', 'mkv', 'webm'] },
         { name: 'All Files', extensions: ['*'] }
@@ -252,10 +378,10 @@ function downloadSimple(url, itag, filePath) {
       quality: itag,
       requestOptions: {
         headers: {
-          cookie: cookies,
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
-      }
+      },
+      cookies: cookies
     });
     const writeStream = fs.createWriteStream(filePath);
     const fileName = path.basename(filePath);
@@ -377,10 +503,10 @@ function downloadStream(url, itag, outputPath, streamType, baseProgress = 0, pro
       quality: itag,
       requestOptions: {
         headers: {
-          cookie: cookies,
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
-      }
+      },
+      cookies: cookies
     });
     const writeStream = fs.createWriteStream(outputPath);
     const fileName = path.basename(outputPath);

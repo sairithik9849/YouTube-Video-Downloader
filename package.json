@@ -6,17 +6,90 @@
   "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "electron ."
+    "start": "electron .",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "dist": "electron-builder --publish=never"
   },
   "author": "Sairithik Komuravelly",
   "license": "MIT",
+  "homepage": "https://github.com/sairithik9849/YouTube-Video-Downloader",
+  "build": {
+    "appId": "com.sairithik.youtube-video-downloader",
+    "productName": "YouTube Video Downloader",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!.git",
+      "!.gitignore",
+      "!README.md",
+      "!BUILD.md",
+      "!dist",
+      "!node_modules/.cache",
+      "!icons/icon.png"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**/*",
+      "icons/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "icons/",
+        "to": "icons/"
+      },
+      {
+        "from": "node_modules/ffmpeg-static/",
+        "to": "ffmpeg-static/",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "icon": "icons/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": false,
+      "verifyUpdateCodeSignature": false,
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "mac": {
+      "icon": "icons/icon.icns",
+      "category": "public.app-category.utilities",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  },
   "dependencies": {
     "@distube/ytdl-core": "^4.16.12",
-    "electron": "^37.2.3",
+    "electron-store": "^8.1.0",
     "ffmpeg-static": "^5.2.0",
     "fluent-ffmpeg": "^2.1.3",
     "google-auth-library": "^9.0.0",
-    "electron-store": "^8.1.0",
     "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "electron": "^37.2.3",
+    "electron-builder": "^26.0.12"
   }
 }

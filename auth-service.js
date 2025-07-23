@@ -1,6 +1,9 @@
 import { GOOGLE_CONFIG, YOUTUBE_API } from './auth-config.js';
 import Store from 'electron-store';
 import fetch from 'node-fetch';
+import { shell } from 'electron';
+import http from 'http';
+import url from 'url';
 
 const store = new Store();
 
@@ -24,6 +27,77 @@ export class AuthService {
     });
 
     return `${YOUTUBE_API.oauthUrl}?${params.toString()}`;
+  }
+
+  // Start OAuth flow with local server
+  async startOAuthFlow() {
+    return new Promise((resolve, reject) => {
+      // Create a local server to capture the authorization code
+      const server = http.createServer((req, res) => {
+        const parsedUrl = url.parse(req.url, true);
+        
+        if (parsedUrl.pathname === '/oauth/callback') {
+          const code = parsedUrl.query.code;
+          const error = parsedUrl.query.error;
+          
+          if (error) {
+            res.writeHead(400, { 'Content-Type': 'text/html' });
+            res.end(`
+              <html>
+                <body style="font-family: Arial; text-align: center; padding: 50px;">
+                  <h2>❌ Authorization Failed</h2>
+                  <p>Error: ${error}</p>
+                  <p>You can close this window and try again in the app.</p>
+                </body>
+              </html>
+            `);
+            server.close();
+            reject(new Error(error));
+            return;
+          }
+          
+          if (code) {
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.end(`
+              <html>
+                <body style="font-family: Arial; text-align: center; padding: 50px;">
+                  <h2>✅ Authorization Successful!</h2>
+                  <p>You can now close this window and return to the app.</p>
+                  <script>window.close();</script>
+                </body>
+              </html>
+            `);
+            server.close();
+            resolve(code);
+            return;
+          }
+        }
+        
+        res.writeHead(404, { 'Content-Type': 'text/html' });
+        res.end('<h1>404 Not Found</h1>');
+      });
+      
+      // Start server on port 8080
+      server.listen(8080, 'localhost', () => {
+        console.log('OAuth callback server started on http://localhost:8080');
+        
+        // Open the OAuth URL in the default browser
+        const authUrl = this.getAuthUrl();
+        shell.openExternal(authUrl);
+      });
+      
+      // Handle server errors
+      server.on('error', (err) => {
+        console.error('OAuth server error:', err);
+        reject(err);
+      });
+      
+      // Set a timeout to avoid hanging forever
+      setTimeout(() => {
+        server.close();
+        reject(new Error('OAuth flow timed out'));
+      }, 300000); // 5 minutes timeout
+    });
   }
 
   // Exchange authorization code for tokens
@@ -126,14 +200,42 @@ export class AuthService {
     try {
       const accessToken = await this.getValidAccessToken();
       
-      // Create a cookie string that simulates an authenticated session
-      // This is a simplified approach - YouTube will recognize the OAuth token
+      // Create cookies in the new format expected by ytdl-core
+      // Using an array of cookie objects instead of a string
       const cookies = [
-        `SAPISID=${this.generateSapisidCookie()}`,
-        `__Secure-3PAPISID=${this.generateSapisidCookie()}`,
-        `LOGIN_INFO=${accessToken}`,
-        `VISITOR_INFO1_LIVE=${this.generateVisitorId()}`
-      ].join('; ');
+        {
+          name: 'SAPISID',
+          value: this.generateSapisidCookie(),
+          domain: '.youtube.com',
+          path: '/',
+          secure: true,
+          httpOnly: false
+        },
+        {
+          name: '__Secure-3PAPISID',
+          value: this.generateSapisidCookie(),
+          domain: '.youtube.com',
+          path: '/',
+          secure: true,
+          httpOnly: false
+        },
+        {
+          name: 'LOGIN_INFO',
+          value: accessToken,
+          domain: '.youtube.com',
+          path: '/',
+          secure: true,
+          httpOnly: true
+        },
+        {
+          name: 'VISITOR_INFO1_LIVE',
+          value: this.generateVisitorId(),
+          domain: '.youtube.com',
+          path: '/',
+          secure: false,
+          httpOnly: false
+        }
+      ];
 
       return cookies;
     } catch (error) {

@@ -7,6 +7,7 @@ console.log('Preload script loaded!');
 contextBridge.exposeInMainWorld('electronAPI', {
   // Authentication methods
   getAuthUrl: () => ipcRenderer.invoke('get-auth-url'),
+  startOAuthFlow: () => ipcRenderer.invoke('start-oauth-flow'),
   exchangeCodeForTokens: (code) => ipcRenderer.invoke('exchange-code-for-tokens', code),
   getUserProfile: () => ipcRenderer.invoke('get-user-profile'),
   logout: () => ipcRenderer.invoke('logout'),

@@ -168,19 +168,36 @@ openFolderBtn.addEventListener('click', handleOpenFolder);
 async function handleLogin() {
     try {
         showStatus('Opening Google sign-in...', 'info');
+        loginBtn.disabled = true;
+        loginBtn.textContent = 'Signing in...';
         
-        // Get the OAuth URL
-        const authUrl = await window.electronAPI.getAuthUrl();
+        // Start the OAuth flow with local server
+        const result = await window.electronAPI.startOAuthFlow();
         
-        // Open the URL in the default browser
-        window.open(authUrl, '_blank');
-        
-        // Show the code input section
-        showCodeInput();
+        if (result.success) {
+            showStatus('Successfully signed in!', 'success');
+            
+            // Get and display user profile
+            const profileResult = await window.electronAPI.getUserProfile();
+            if (profileResult.success && profileResult.profile) {
+                userAvatar.src = profileResult.profile.picture || '';
+                userName.textContent = profileResult.profile.name || 'Unknown User';
+                userEmail.textContent = profileResult.profile.email || '';
+            }
+            
+            // Switch to authenticated state
+            showAuthenticatedState();
+            
+        } else {
+            showStatus('Authentication failed: ' + result.error, 'error');
+        }
         
     } catch (error) {
         console.error('Login error:', error);
         showStatus('Error during sign-in: ' + error.message, 'error');
+    } finally {
+        loginBtn.disabled = false;
+        loginBtn.textContent = 'Sign in with Google';
     }
 }
 
@@ -429,10 +446,13 @@ async function handleDownloadVideo() {
         console.log('Needs merging:', needsMerging);
         
         const url = urlInput.value.trim();
+        const videoTitle = currentVideoInfo?.videoInfo?.title || 'video';
+        
         const result = await window.electronAPI.downloadVideo(url, {
             videoItag: qualitySelect.value,
             needsMerging: needsMerging,
-            audioItag: audioItag
+            audioItag: audioItag,
+            videoTitle: videoTitle
         });
         
         if (result.cancelled) {
