@@ -54,10 +54,6 @@ npm run build:win
 npm run build:mac
 ```
 
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) file for details.
-
 ## ⚠️ Disclaimer
 
 This tool is for educational purposes. Respect YouTube's Terms of Service and content creators' rights. Only download videos you have permission to download.
