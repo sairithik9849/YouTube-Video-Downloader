@@ -5,6 +5,7 @@ import fs from 'fs';
 import ytdl from '@distube/ytdl-core';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegStatic from 'ffmpeg-static';
+import { AuthService } from './auth-service.js';
 
 // ES6 modules equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -14,6 +15,7 @@ const __dirname = path.dirname(__filename);
 ffmpeg.setFfmpegPath(ffmpegStatic);
 
 let mainWindow;
+let authService;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -37,6 +39,7 @@ function createWindow() {
 
 // This method will be called when Electron has finished initialization
 app.whenReady().then(() => {
+  authService = new AuthService();
   createWindow();
 
   app.on('activate', () => {
@@ -53,21 +56,62 @@ app.on('window-all-closed', () => {
   }
 });
 
-// TODO: Add IPC handlers for:
-// - get-video-info
+// Authentication IPC handlers
+ipcMain.handle('get-auth-url', () => {
+  return authService.getAuthUrl();
+});
 
-// - download-video  
-// - play-video
+ipcMain.handle('exchange-code-for-tokens', async (event, code) => {
+  return await authService.exchangeCodeForTokens(code);
+});
+
+ipcMain.handle('get-user-profile', async () => {
+  try {
+    const profile = authService.getUserProfile();
+    return { success: true, profile };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('logout', () => {
+  authService.logout();
+  return { success: true };
+});
+
+ipcMain.handle('is-authenticated', () => {
+  return authService.isAuthenticated();
+});
+
+ipcMain.handle('test-youtube-access', async () => {
+  return await authService.testYouTubeAccess();
+});
 
 // IPC Handlers for YouTube Video Downloader
 ipcMain.handle('get-video-info', async (event, url) => {
   try {
+    // Check if user is authenticated
+    if (!authService.isAuthenticated()) {
+      return { error: 'Please sign in with your Google account first.' };
+    }
+
     // Validate URL
     if (!ytdl.validateURL(url)) {
       return { error: 'Invalid YouTube URL.' };
     }
-    // Fetch video info
-    const info = await ytdl.getInfo(url);
+
+    // Get authenticated cookies
+    const cookies = await authService.getYouTubeCookies();
+    
+    // Fetch video info with authenticated cookies
+    const info = await ytdl.getInfo(url, {
+      requestOptions: {
+        headers: {
+          cookie: cookies,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+      }
+    });
     
     // Get video+audio formats (lower quality, ready to download)
     const videoAndAudioFormats = ytdl.filterFormats(info.formats, 'videoandaudio');
@@ -136,13 +180,28 @@ ipcMain.handle('get-video-info', async (event, url) => {
         return getQualityNum(b.quality) - getQualityNum(a.quality);
       });
     
+    // Extract video metadata for preview
+    const videoDetails = info.videoDetails;
+    const videoInfo = {
+      title: videoDetails.title,
+      author: videoDetails.author.name,
+      channelUrl: videoDetails.author.channel_url,
+      lengthSeconds: parseInt(videoDetails.lengthSeconds),
+      viewCount: parseInt(videoDetails.viewCount),
+      uploadDate: videoDetails.uploadDate,
+      description: videoDetails.description,
+      thumbnails: videoDetails.thumbnails || [],
+      keywords: videoDetails.keywords || []
+    };
+
     return { 
       formats: result,
       audioFormat: bestAudio ? {
         itag: bestAudio.itag,
         container: bestAudio.container,
         bitrate: bestAudio.audioBitrate
-      } : null
+      } : null,
+      videoInfo: videoInfo
     };
   } catch (err) {
     return { error: err.message || 'Failed to fetch video info.' };
@@ -153,6 +212,10 @@ ipcMain.handle('get-video-info', async (event, url) => {
 ipcMain.handle('download-video', async (event, { url, videoItag, needsMerging, audioItag }) => {
   
   try {
+    // Check if user is authenticated
+    if (!authService.isAuthenticated()) {
+      return { error: 'Please sign in with your Google account first.' };
+    }
     // Show save dialog
     const { filePath } = await dialog.showSaveDialog(mainWindow, {
       defaultPath: 'video.mp4',
@@ -181,9 +244,21 @@ ipcMain.handle('download-video', async (event, { url, videoItag, needsMerging, a
 
 // Simple download function for video+audio formats
 function downloadSimple(url, itag, filePath) {
-  return new Promise((resolve) => {
-    const video = ytdl(url, { quality: itag });
+  return new Promise(async (resolve) => {
+    // Get authenticated cookies
+    const cookies = await authService.getYouTubeCookies();
+    
+    const video = ytdl(url, { 
+      quality: itag,
+      requestOptions: {
+        headers: {
+          cookie: cookies,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+      }
+    });
     const writeStream = fs.createWriteStream(filePath);
+    const fileName = path.basename(filePath);
     let downloaded = 0;
     let total = 0;
 
@@ -196,7 +271,10 @@ function downloadSimple(url, itag, filePath) {
       mainWindow.webContents.send('download-progress', {
         percent,
         downloaded,
-        total
+        total,
+        fileName: fileName,
+        currentStep: 1,
+        totalSteps: 1
       });
     });
 
@@ -228,6 +306,7 @@ async function downloadAndMerge(url, videoItag, audioItag, finalPath) {
     const basename = path.basename(finalPath, path.extname(finalPath));
     const videoTemp = path.join(tempDir, `${basename}_video_temp.mp4`);
     const audioTemp = path.join(tempDir, `${basename}_audio_temp.mp4`);
+    const fileName = path.basename(finalPath);
     
     try {
       
@@ -236,32 +315,19 @@ async function downloadAndMerge(url, videoItag, audioItag, finalPath) {
         percent: 0,
         downloaded: 0,
         total: 0,
-        stage: 'Downloading video stream...'
+        stage: 'Downloading video stream...',
+        fileName: fileName,
+        currentStep: 1,
+        totalSteps: 3
       });
 
-      // Download video stream
-      await downloadStream(url, videoItag, videoTemp, 'video');
+      // Download video stream (0% to 33%)
+      await downloadStream(url, videoItag, videoTemp, 'video', 0, 33);
       
-      // Update UI
-      mainWindow.webContents.send('download-progress', {
-        percent: 33,
-        downloaded: 0,
-        total: 0,
-        stage: 'Downloading audio stream...'
-      });
-
-      // Download audio stream
-      await downloadStream(url, audioItag, audioTemp, 'audio');
+      // Download audio stream (33% to 66%)
+      await downloadStream(url, audioItag, audioTemp, 'audio', 33, 33);
       
-      // Update UI
-      mainWindow.webContents.send('download-progress', {
-        percent: 66,
-        downloaded: 0,
-        total: 0,
-        stage: 'Merging video and audio...'
-      });
-
-      // Merge video and audio using ffmpeg
+      // Merge video and audio using ffmpeg (continues smoothly from 66%)
       await mergeStreams(videoTemp, audioTemp, finalPath);
       
       // Clean up temporary files
@@ -299,13 +365,48 @@ async function downloadAndMerge(url, videoItag, audioItag, finalPath) {
   });
 }
 
-// Helper function to download a single stream
-function downloadStream(url, itag, outputPath, streamType) {
-  return new Promise((resolve, reject) => {
+// Helper function to download a single stream with progress tracking
+function downloadStream(url, itag, outputPath, streamType, baseProgress = 0, progressRange = 33) {
+  return new Promise(async (resolve, reject) => {
     console.log(`Downloading ${streamType} stream (itag: ${itag}) to:`, outputPath);
     
-    const stream = ytdl(url, { quality: itag });
+    // Get authenticated cookies
+    const cookies = await authService.getYouTubeCookies();
+    
+    const stream = ytdl(url, { 
+      quality: itag,
+      requestOptions: {
+        headers: {
+          cookie: cookies,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+      }
+    });
     const writeStream = fs.createWriteStream(outputPath);
+    const fileName = path.basename(outputPath);
+    let downloaded = 0;
+    let total = 0;
+    
+    // Track download progress for this stream
+    stream.on('progress', (chunkLength, downloadedSoFar, totalSize) => {
+      downloaded = downloadedSoFar;
+      total = totalSize;
+      
+      // Calculate progress within this stage (0-33% for video, 33-66% for audio)
+      const stageProgress = total > 0 ? (downloaded / total) * progressRange : 0;
+      const totalProgress = baseProgress + stageProgress;
+      
+      // Send real-time progress update
+      mainWindow.webContents.send('download-progress', {
+        percent: Math.min(100, totalProgress),
+        downloaded: downloadedSoFar,
+        total: totalSize,
+        stage: streamType === 'video' ? 'Downloading video stream...' : 'Downloading audio stream...',
+        fileName: fileName.replace('_video_temp.mp4', '.mp4').replace('_audio_temp.mp4', '.mp4'),
+        currentStep: streamType === 'video' ? 1 : 2,
+        totalSteps: 3
+      });
+    });
     
     stream.on('error', (err) => {
       console.error(`Error downloading ${streamType}:`, err.message);
@@ -349,6 +450,36 @@ function mergeStreams(videoPath, audioPath, outputPath) {
       return reject(error);
     }
     
+    const fileName = path.basename(outputPath);
+    let videoDuration = null;
+    let lastProgressTime = Date.now();
+    let fallbackProgress = 66;
+    let lastReportedProgress = 66; // Track the last progress to ensure smooth continuation
+    let mergeStarted = false; // Track if merging has actually started
+    
+    // Fallback progress updater in case FFmpeg doesn't report progress
+    const fallbackInterval = setInterval(() => {
+      if (fallbackProgress < 98 && !mergeStarted) {
+        fallbackProgress += Math.random() * 1 + 0.5; // Slowly increment (0.5-1.5% per update)
+        const safeProgress = Math.max(fallbackProgress, lastReportedProgress);
+        
+        // Ensure no sudden jumps in fallback mode either
+        const maxIncrease = lastReportedProgress + 2; // Max 2% jump per fallback update
+        const finalProgress = Math.min(safeProgress, maxIncrease, 98);
+        lastReportedProgress = finalProgress;
+        
+        mainWindow.webContents.send('download-progress', {
+          percent: finalProgress,
+          downloaded: 0,
+          total: 0,
+          stage: 'Merging video and audio...',
+          fileName: fileName,
+          currentStep: 3,
+          totalSteps: 3
+        });
+      }
+    }, 500); // Update every 500ms
+    
     ffmpeg()
       .input(videoPath)
       .input(audioPath)
@@ -363,25 +494,98 @@ function mergeStreams(videoPath, audioPath, outputPath) {
       })
       .on('stderr', (stderrLine) => {
         console.log('FFmpeg stderr:', stderrLine);
+        
+        // Extract duration from FFmpeg stderr for better progress calculation
+        const durationMatch = stderrLine.match(/Duration: (\d{2}):(\d{2}):(\d{2}\.\d{2})/);
+        if (durationMatch && !videoDuration) {
+          const hours = parseInt(durationMatch[1]);
+          const minutes = parseInt(durationMatch[2]);
+          const seconds = parseFloat(durationMatch[3]);
+          videoDuration = hours * 3600 + minutes * 60 + seconds;
+          console.log('Video duration detected:', videoDuration, 'seconds');
+        }
       })
       .on('progress', (progress) => {
         console.log('FFmpeg progress:', progress);
-        // FFmpeg progress updates
+        clearInterval(fallbackInterval); // Stop fallback since we have real progress
+        
+        if (!mergeStarted) {
+          // First progress report - start from current position smoothly
+          mergeStarted = true;
+          lastProgressTime = Date.now();
+        }
+        
+        let mergePercent = 0;
+        
+        // Try multiple methods to get accurate progress (with validation)
+        if (progress.percent && progress.percent > 0 && progress.percent <= 100) {
+          // Only use FFmpeg percent if it seems reasonable (not immediately 100%)
+          if (progress.percent < 95 || (Date.now() - lastProgressTime) > 1000) {
+            mergePercent = Math.min(100, progress.percent);
+          }
+        } else if (progress.timemark && videoDuration) {
+          // Parse timemark (format: HH:MM:SS.SS)
+          const timeMatch = progress.timemark.match(/(\d{2}):(\d{2}):(\d{2}\.\d{2})/);
+          if (timeMatch) {
+            const hours = parseInt(timeMatch[1]);
+            const minutes = parseInt(timeMatch[2]);
+            const seconds = parseFloat(timeMatch[3]);
+            const currentTime = hours * 3600 + minutes * 60 + seconds;
+            mergePercent = Math.min(100, (currentTime / videoDuration) * 100);
+          }
+        }
+        
+        // If no reliable progress, use time-based estimation
+        if (mergePercent === 0) {
+          const timeDiff = (Date.now() - lastProgressTime) / 1000;
+          mergePercent = Math.min(90, (timeDiff / 5) * 100); // Slower progression over 5 seconds
+        }
+        
+        // Calculate total progress (66% + merge progress scaled to 34%)
+        const calculatedProgress = 66 + (mergePercent * 0.34);
+        
+        // Ensure smooth progression - small incremental increases only
+        const maxIncrease = lastReportedProgress + 5; // Max 5% jump per update
+        const totalProgress = Math.min(calculatedProgress, maxIncrease, 100);
+        lastReportedProgress = Math.max(totalProgress, lastReportedProgress); // Never go backwards
+        
+        console.log(`Merge progress: mergePercent=${mergePercent}%, calculated=${calculatedProgress}%, final=${lastReportedProgress}%`);
+        
         mainWindow.webContents.send('download-progress', {
-          percent: 66 + (progress.percent || 0) * 0.34, // Scale to 66-100%
+          percent: Math.min(100, totalProgress),
           downloaded: 0,
           total: 0,
-          stage: `Merging... ${Math.round(progress.percent || 0)}%`
+          stage: 'Merging video and audio...',
+          fileName: fileName,
+          currentStep: 3,
+          totalSteps: 3
         });
+        
+        lastProgressTime = Date.now();
       })
       .on('end', () => {
         console.log('Merging completed successfully');
+        clearInterval(fallbackInterval);
+        
+        // Send final 100% progress
+        lastReportedProgress = 100;
+        mainWindow.webContents.send('download-progress', {
+          percent: 100,
+          downloaded: 0,
+          total: 0,
+          stage: 'Merging completed!',
+          fileName: fileName,
+          currentStep: 3,
+          totalSteps: 3
+        });
+        
         resolve();
       })
       .on('error', (err, stdout, stderr) => {
         console.error('FFmpeg error:', err.message);
         console.error('FFmpeg stdout:', stdout);
         console.error('FFmpeg stderr:', stderr);
+        clearInterval(fallbackInterval);
         reject(new Error(`FFmpeg error: ${err.message}`));
       })
       .save(outputPath);

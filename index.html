@@ -10,9 +10,66 @@
     <div class="container">
         <h1>🎥 YouTube Video Downloader</h1>
         
+        <!-- Authentication Section -->
+        <div id="authSection" class="auth-section">
+            <!-- Login Prompt (shown when not authenticated) -->
+            <div id="loginPrompt" class="login-prompt">
+                <div class="auth-card">
+                    <h2>🔐 Sign In Required</h2>
+                    <p>To avoid YouTube's bot detection and access all videos, please sign in with your Google account.</p>
+                    <button id="loginBtn" class="auth-btn">Sign in with Google</button>
+                </div>
+            </div>
+            
+            <!-- User Profile (shown when authenticated) -->
+            <div id="userProfile" class="user-profile" style="display: none;">
+                <img id="userAvatar" class="user-avatar" src="" alt="User Avatar">
+                <div class="user-info">
+                    <div id="userName" class="user-name"></div>
+                    <div id="userEmail" class="user-email"></div>
+                </div>
+                <button id="logoutBtn" class="logout-btn">Sign Out</button>
+            </div>
+        </div>
+        
+        <!-- Main App Section (hidden until authenticated) -->
+        <div id="appSection" class="app-section" style="display: none;">
+        
         <div class="input-group">
             <input type="text" id="urlInput" placeholder="Paste YouTube video URL here..." />
             <button id="fetchBtn">Get Video Info</button>
+        </div>
+        
+        <!-- Video Info Preview Section -->
+        <div id="videoInfoSection" class="video-info-section" style="display: none;">
+            <div id="videoInfoLoading" class="video-info-loading">
+                <div class="loading-skeleton">
+                    <div class="skeleton-thumbnail"></div>
+                    <div class="skeleton-text">
+                        <div class="skeleton-line skeleton-title"></div>
+                        <div class="skeleton-line skeleton-channel"></div>
+                        <div class="skeleton-line skeleton-duration"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="videoInfoCard" class="video-info-card" style="display: none;">
+                <div class="video-thumbnail">
+                    <img id="videoThumbnail" src="" alt="Video thumbnail">
+                    <div class="video-duration-badge" id="videoDurationBadge"></div>
+                </div>
+                <div class="video-details">
+                    <h3 id="videoTitle" class="video-title"></h3>
+                    <div class="video-meta">
+                        <p id="videoChannel" class="video-channel"></p>
+                        <div class="video-stats">
+                            <span id="videoViews" class="video-views"></span>
+                            <span class="separator">•</span>
+                            <span id="videoUploadDate" class="video-upload-date"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
         
         <div id="qualitySection" class="quality-section">
@@ -24,7 +81,15 @@
         </div>
         
         <div class="progress-section">
-            <progress id="progressBar" value="0" max="100" style="display: none;"></progress>
+            <div id="progressContainer" class="progress-container" style="display: none;">
+                <div class="progress-bar">
+                    <div id="progressFill" class="progress-fill">
+                        <div class="progress-shine"></div>
+                    </div>
+                    <div id="progressText" class="progress-text">0%</div>
+                </div>
+                <div id="progressStage" class="progress-stage">Preparing download...</div>
+            </div>
             <div id="status" class="status"></div>
         </div>
         
@@ -32,6 +97,8 @@
             <button id="playBtn">▶️ Play Video</button>
             <button id="openFolderBtn">📁 Open Folder</button>
         </div>
+        
+        </div> <!-- End of appSection -->
     </div>
     
     <script type="module" src="renderer.js"></script>

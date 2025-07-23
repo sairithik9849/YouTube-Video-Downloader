@@ -5,7 +5,15 @@ console.log('Preload script loaded!');
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electronAPI', {
-  // YouTube video operations
+  // Authentication methods
+  getAuthUrl: () => ipcRenderer.invoke('get-auth-url'),
+  exchangeCodeForTokens: (code) => ipcRenderer.invoke('exchange-code-for-tokens', code),
+  getUserProfile: () => ipcRenderer.invoke('get-user-profile'),
+  logout: () => ipcRenderer.invoke('logout'),
+  isAuthenticated: () => ipcRenderer.invoke('is-authenticated'),
+  testYouTubeAccess: () => ipcRenderer.invoke('test-youtube-access'),
+  
+  // YouTube video operations (now require authentication)
   getVideoInfo: (url) => ipcRenderer.invoke('get-video-info', url),
   downloadVideo: (url, downloadOptions) => ipcRenderer.invoke('download-video', { url, ...downloadOptions }),
   playVideo: (filePath) => ipcRenderer.invoke('play-video', filePath),
