@@ -4,7 +4,7 @@ A secure desktop application for downloading YouTube videos with Google OAuth au
 
 ## 📥 Download
 
-**Windows:** [Download YouTube Video Downloader Setup.exe](https://github.com/sairithik9849/YouTube-Video-Downloader/releases)  
+**Windows:** [YouTube Video Downloader Setup.exe](https://github.com/sairithik9849/YouTube-Video-Downloader/releases)  
 **macOS:** Coming soon
 
 ## ✨ Features
@@ -50,7 +50,7 @@ npm start
 # Windows
 npm run build:win
 
-# macOS (requires Mac)
+# macOS
 npm run build:mac
 ```
 
